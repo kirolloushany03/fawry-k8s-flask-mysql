@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+  namespace: fawry-task
+data:
+  MYSQL_DATABASE: "BucketList"
