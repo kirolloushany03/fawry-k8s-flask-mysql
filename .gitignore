@@ -1,0 +1,12 @@
+# TLS Private Keys & Certificates (Generated dynamically via script)
+tls.key
+tls.crt
+
+# OS & Editor Metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tmp
+
+kind/
