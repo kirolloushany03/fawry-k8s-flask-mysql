@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: fawry-task
+spec:
+  serviceName: "db-service"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      imagePullSecrets:
+        - name: regcred
+      # terminationGracePeriodSeconds: 30
+      containers:
+      - name: mysql
+        image: kirollous03/mysql-db:v1
+        ports:
+        - containerPort: 3306
+          name: mysql
+
+        envFrom:
+        - configMapRef:
+            name: mysql-config
+        
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: MYSQL_ROOT_PASSWORD
+
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+        startupProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          failureThreshold: 20
+
+        livenessProbe:
+          tcpSocket:
+            port: 3306
+          periodSeconds: 10
+          timeoutSeconds: 2
+          
+        readinessProbe:
+          tcpSocket:
+            port: 3306
+          periodSeconds: 5
+          timeoutSeconds: 2
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "standard"
+      resources:
+        requests:
+          storage: 500Mi
