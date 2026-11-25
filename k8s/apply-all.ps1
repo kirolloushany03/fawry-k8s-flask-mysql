@@ -48,22 +48,19 @@ kubectl create secret tls flask-tls-secret `
   --dry-run=client -o yaml | kubectl apply -f -
 
 Write-Host "4. Applying Secrets..." -ForegroundColor Cyan
-kubectl apply -f ./secrets/
+kubectl apply -f secrets.yaml
 
 Write-Host "5. Applying ConfigMaps..." -ForegroundColor Cyan
-kubectl apply -f ./configmaps/
+kubectl apply -f configmap.yaml
 
-Write-Host "6. Applying Network Policies..." -ForegroundColor Cyan
-kubectl apply -f ./network-policies/
+Write-Host "6. Applying Network Policy..." -ForegroundColor Cyan
+kubectl apply -f db-network-policy.yaml
 
-Write-Host "7. Applying Services..." -ForegroundColor Cyan
-kubectl apply -f ./services/
+Write-Host "7. Deploying MySQL Database..." -ForegroundColor Cyan
+kubectl apply -f mysql-statefulset.yaml
 
-Write-Host "8. Deploying Workloads (StatefulSet & Deployment)..." -ForegroundColor Cyan
-kubectl apply -f ./deployments/
-
-Write-Host "9. Applying Ingress Routing..." -ForegroundColor Cyan
-kubectl apply -f ./ingress/
+Write-Host "8. Deploying Flask Application..." -ForegroundColor Cyan
+kubectl apply -f flask-deployment.yaml
 
 Write-Host "Deployment Completed! Checking status..." -ForegroundColor Green
 kubectl get all,pvc,ingress,netpol -n fawry-task

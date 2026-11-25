@@ -50,22 +50,19 @@ kubectl create secret tls flask-tls-secret \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "4. Applying Secrets..."
-kubectl apply -f ./secrets/
+kubectl apply -f secrets.yaml
 
 echo "5. Applying ConfigMaps..."
-kubectl apply -f ./configmaps/
+kubectl apply -f configmap.yaml
 
-echo "6. Applying Network Policies..."
-kubectl apply -f ./network-policies/
+echo "6. Applying Network Policy..."
+kubectl apply -f db-network-policy.yaml
 
-echo "7. Applying Services..."
-kubectl apply -f ./services/
+echo "7. Deploying MySQL Database..."
+kubectl apply -f mysql-statefulset.yaml
 
-echo "8. Deploying Workloads (StatefulSet & Deployment)..."
-kubectl apply -f ./deployments/
-
-echo "9. Applying Ingress Routing..."
-kubectl apply -f ./ingress/
+echo "8. Deploying Flask Application..."
+kubectl apply -f flask-deployment.yaml
 
 echo "Deployment Completed! Checking status..."
 kubectl get all,pvc,ingress,netpol -n "$NS"
