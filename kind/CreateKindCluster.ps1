@@ -10,12 +10,15 @@ kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0
 # Install Nginx Ingress Controller
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 
+# Pin Ingress controller to the control-plane node that holds ports 80/443
+kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='merge' -p '{"spec":{"template":{"spec":{"nodeSelector":{"ingress-ready":"true"}}}}}'
+
 # Wait for the Nginx Ingress Controller to be ready
+# kubectl rollout watching deployment controller itself 
+#so it insure that is on the control-plane node and ready to serve traffic
+# and old one is replaced by the new one
 Write-Output "Waiting for Nginx Ingress controller to be ready..."
-kubectl wait --namespace ingress-nginx `
-  --for=condition=ready pod `
-  --selector=app.kubernetes.io/component=controller `
-  --timeout=300s
+kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=300s
 
 $endTime = Get-Date
 $duration = $endTime - $startTime
