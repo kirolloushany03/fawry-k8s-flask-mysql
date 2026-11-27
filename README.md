@@ -5,7 +5,30 @@
 [![Calico](https://img.shields.io/badge/CNI-Calico%20v3.27-F9A825)](https://www.tigera.io/project-calico/)
 [![Ingress](https://img.shields.io/badge/Ingress-NGINX%20TLS-009639)](https://kubernetes.github.io/ingress-nginx/)
 
-A declarative, multi-node Kubernetes deployment for a containerized Python Flask web application (`BucketList`) backed by a MySQL `StatefulSet`. Deployed on a 2-node KinD cluster (1 control-plane + 1 worker) with standard Kubernetes `NetworkPolicy` isolation enforced by Calico, host-based TLS Ingress routing, dynamic PVC provisioning, and automated PowerShell/Bash bootstrap scripts.
+A declarative, multi-node Kubernetes deployment for a containerized Python Flask web application (`BucketList`) backed by a MySQL `StatefulSet`. Deployed on a 2-node KinD cluster (1 control-plane + 1 worker) with standard Kubernetes `NetworkPolicy` isolation enforced by Calico, host-based TLS Ingress routing, Headless Service database pinning, and automated PowerShell/Bash bootstrap scripts.
+
+---
+
+## ⚡ Quick Start (Copy & Run 1-2-3-4)
+
+Assuming you have **Docker Desktop**, **`kind`**, **`kubectl`**, and **`openssl`** installed:
+
+```powershell
+# 1. Create the 2-node KinD cluster (with Calico CNI & NGINX Ingress)
+cd kind
+.\CreateKindCluster.ps1
+
+# 2. Deploy the entire stack (Namespace, Secrets, ConfigMap, NetPol, MySQL, Flask)
+cd ..\k8s
+.\apply-all.ps1
+
+# 3. Map the local domain (run PowerShell as Administrator)
+Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "`n127.0.0.1 flask-app.com"
+
+# 4. Verify the app is live (or open https://flask-app.com in your browser)
+curl -k https://flask-app.com
+```
+> **Note:** On Linux/macOS without PowerShell, run the `kind` / `kubectl` commands inside `kind/CreateKindCluster.ps1` directly, then run `chmod +x Bash-apply-all.sh && ./Bash-apply-all.sh` inside `k8s/`. (See detailed notes below.)
 
 ---
 
@@ -19,7 +42,6 @@ A declarative, multi-node Kubernetes deployment for a containerized Python Flask
                       │ (Host: flask-app.com)
                       ▼
             [ Service: flask-service (ClusterIP:80) ]
-            [ Service: flask-nodeport-service (:30008) ] (Bonus hook)
                       │
                       ▼
      ┌─────────────────────────────────────────────────────┐
@@ -37,12 +59,13 @@ A declarative, multi-node Kubernetes deployment for a containerized Python Flask
      └─────────────────────────────────────────────────────┘
                               │
                               ▼
-             [ Service: db-service (ClusterIP:3306) ]
+         [ Headless Service: db-service (clusterIP: None) ]
                               │
+                              │ Direct DNS: mysql-0.db-service
                               ▼
      ┌─────────────────────────────────────────────────────┐
      │             MySQL Database (StatefulSet)            │
-     │     - Replicas: 2 (mysql-0, mysql-1)                │
+     │     - Replicas: 2 (mysql-0 active, mysql-1 standby) │
      │     - Storage: volumeClaimTemplates (500Mi)         │
      │     - Probes: tcpSocket on port 3306                │
      │     - Resources: Req(256Mi, 250m) / Lim(512Mi, 500m)│
@@ -55,140 +78,108 @@ A declarative, multi-node Kubernetes deployment for a containerized Python Flask
 
 ```text
 fawry-k8s-flask-mysql/
-├── .gitignore                          # Ignores generated TLS keys/certs & local temp files
-├── README.md                           # Architecture, runbook, and design trade-offs
-├── flaskapp/                           # Python Flask application source & Dockerfile
-├── mysql/                              # MySQL schema init script (BucketList.sql) & Dockerfile
+├── .gitignore                      # Ignores generated TLS keys/certs & local temp files
+├── README.md                       # Architecture, quick start, and troubleshooting guide
+├── flaskapp/                       # Python Flask application source & Dockerfile
+├── mysql/                          # MySQL schema init script (BucketList.sql) & Dockerfile
 ├── kind/
-│   ├── KindCluster.yaml                # 2-node KinD topology (ports 80/443, disableDefaultCNI)
-│   ├── CreateKindCluster.ps1           # Cluster bootstrap + Calico CNI + NGINX Ingress setup
-│   └── DeleteKindCluster.ps1           # Cluster teardown script
+│   ├── KindCluster.yaml            # 2-node KinD topology (ports 80/443, disableDefaultCNI)
+│   ├── CreateKindCluster.ps1       # Cluster bootstrap + Calico CNI + pinned NGINX Ingress
+│   └── DeleteKindCluster.ps1       # Cluster teardown script
 └── k8s/
-    ├── Namespace.yaml                  # Dedicated 'fawry-task' namespace
-    ├── apply-all.ps1                   # Deployment & secret bootstrap script (Windows PowerShell)
-    ├── Bash-apply-all.sh               # Deployment & secret bootstrap script (Linux/macOS Bash)
-    ├── configmaps/
-    │   ├── flask-config.yaml           # Flask database connection parameters
-    │   └── mysql-config.yaml           # MySQL database name parameter
-    ├── secrets/
-    │   └── mysql-secret.yaml           # Local dev database credentials
-    ├── network-policies/
-    │   └── db-network-policy.yaml      # Standard K8s NetworkPolicy restricting TCP :3306 to Flask
-    ├── services/
-    │   ├── flask-service.yaml          # Internal ClusterIP (Port 80 -> Target 5002)
-    │   ├── mysql-service.yaml          # Internal ClusterIP (Port 3306)
-    │   └── flask-nodeport-service.yaml # Bonus NodePort test hook (Port 30008)
-    ├── deployments/
-    │   ├── flask-deployment.yaml       # 2-replica Flask web tier with HTTP probes & limits
-    │   └── mysql-statefulset.yaml      # 2-replica MySQL StatefulSet with dynamic PVCs
-    └── ingress/
-        └── flask-ingress.yaml          # Host-based TLS Ingress rule for flask-app.com
+    ├── Namespace.yaml              # Dedicated 'fawry-task' namespace
+    ├── apply-all.ps1               # Automated deployment script (Windows PowerShell)
+    ├── Bash-apply-all.sh           # Automated deployment script (Linux/macOS Bash)
+    ├── secrets.yaml                # Local dev MySQL credentials
+    ├── configMap.yaml              # Flask DB config (points host to mysql-0.db-service)
+    ├── db-network-policy.yaml      # Standard K8s NetworkPolicy restricting TCP :3306 to Flask
+    ├── mysql-statefulset.yaml      # Headless db-service + 2-replica MySQL StatefulSet
+    └── flask-deployment.yaml       # Ingress + ClusterIP Service + 2-replica Flask Deployment
 ```
+
+*(Note: The original 11-folder submission structure is preserved in git tag `v1.0-fawry-rubric`.)*
 
 ---
 
-## 🐳 3. Container Images (Build & Push)
+## 🐳 3. Container Images (Public vs Private)
 
-Both images are built explicitly for `linux/amd64` and pushed to Docker Hub under tag `v1`. Per the assignment's private-registry requirement, **`mysql-db` is hosted in a private Docker Hub repository** (pulled via `imagePullSecrets: regcred`), while **`flask-app` is public**.
+Per the private-registry requirement:
+* **`flask-app` (`kirollous03/flask-app:v1`)** is hosted in a **Public** Docker Hub repository.
+* **`mysql-db` (`kirollous03/mysql-db:v1`)** is hosted in a **Private** Docker Hub repository (pulled via `imagePullSecrets: regcred`).
+
+Because `mysql-db` is private, anyone cloning this repo should build and push their own images to Docker Hub:
 
 ```bash
-# 1. Build & push Flask web app image (Public repository)
-docker build --platform linux/amd64 -t userName/flask-app:v1 ./flaskapp
-docker push userName/flask-app:v1
+# 1. Build & push Flask image (Public repo)
+docker build -t <YOUR_DOCKERHUB_USER>/flask-app:v1 ./flaskapp
+docker push <YOUR_DOCKERHUB_USER>/flask-app:v1
 
-# 2. Build & push MySQL database image (Private repository)
-docker build --platform linux/amd64 -t userName/mysql-db:v1 ./mysql
-docker push userName/mysql-db:v1
+# 2. Build & push MySQL image (keep this repo Private)
+docker build -t <YOUR_DOCKERHUB_USER>/mysql-db:v1 ./mysql
+docker push <YOUR_DOCKERHUB_USER>/mysql-db:v1
 ```
-> **Note:** `mysql-db` is a private repository, so you cannot pull mine.
-> Replace `userName` with your own Docker Hub username, push both images to your account
-> (keep `mysql-db` private), and update the `image:` fields (currently `kirollous03/...`) in
-> `k8s/deployments/flask-deployment.yaml` and `k8s/deployments/mysql-statefulset.yaml`.
-> The deploy scripts will then create `regcred` from your own credentials.
+*(Tip for Apple Silicon / ARM Macs: add `--platform linux/amd64` to `docker build` if your cluster nodes are `amd64`.)*
+
+**Update image references before deploying:**
+* Search for `kirollous03/flask-app:v1` in `k8s/flask-deployment.yaml` and replace with `<YOUR_DOCKERHUB_USER>/flask-app:v1`.
+* Search for `kirollous03/mysql-db:v1` in `k8s/mysql-statefulset.yaml` and replace with `<YOUR_DOCKERHUB_USER>/mysql-db:v1`.
+
 ---
 
-## ⚙️ 4. Prerequisites & Cluster Provisioning
-
-### Prerequisites
-- Docker Engine
-- `kind` & `kubectl`
-- `openssl` (for generating local self-signed TLS certificates)
+## ⚙️ 4. Cluster Provisioning & Deployment Details
 
 ### Why KinD?
-**KinD** was chosen deliberately to satisfy the multi-node requirement (**1 control-plane + 1 worker**) while avoiding Minikube's single-node limitation. Under the hood, KinD bootstraps conformant Kubernetes clusters using **`kubeadm`** and allows disabling the default CNI (`disableDefaultCNI: true`) so **Calico (`v3.27.0`)** can enforce standard `NetworkPolicy` resources cleanly on a local workstation.
+**KinD** was chosen to provide a local multi-node Kubernetes cluster (**1 control-plane + 1 worker**) via Docker Desktop on Windows without spinning up heavy extra VMs. Under the hood, KinD bootstraps nodes using **`kubeadm`** and allows `disableDefaultCNI: true` (`podSubnet: 192.168.0.0/16`) so **Calico (`v3.27.0`)** can enforce `NetworkPolicy` rules.
 
-### Provision the 2-Node Cluster
+### Cluster Provisioning (`kind/`)
+The scripts in `kind/` are written in PowerShell and expect to be executed from inside `kind/`:
 ```powershell
 cd kind
 .\CreateKindCluster.ps1
 ```
+> **Linux/macOS Note:** Run the `kind create` and `kubectl` commands inside `CreateKindCluster.ps1` directly (pausing a few seconds after applying `tigera-operator.yaml` if Calico CRDs are still registering).
 
-> **Note:** The `kind/` scripts are written in PowerShell and expect to run from inside `kind/`. On Linux/macOS without `pwsh`, execute the `kind create` and `kubectl` commands inside `CreateKindCluster.ps1` directly (pausing a few seconds after `tigera-operator.yaml` if Calico CRDs are still registering).
-
-To tear down the cluster later:
+To delete the cluster when finished:
 ```powershell
 cd kind
 .\DeleteKindCluster.ps1
 ```
 
----
+### Application Deployment (`k8s/`)
+* **Windows:** Run `.\apply-all.ps1` from inside `k8s/`.
+* **Linux/macOS:** Run `./Bash-apply-all.sh` (it automatically resolves its own directory).
 
-## 🚀 5. Application Deployment
-
-Both scripts create the `fawry-task` namespace, bootstrap the `regcred` registry secret at runtime, generate local self-signed TLS certificates if missing, and apply all manifests in dependency order.
-
-### Windows (PowerShell)
-> Run from inside `k8s/` so relative manifest paths resolve properly.
-```powershell
-cd k8s
-.\apply-all.ps1
-```
-
-### Linux / macOS (Bash)
-> `Bash-apply-all.sh` resolves its own working directory automatically.
-```bash
-cd k8s
-chmod +x Bash-apply-all.sh
-./Bash-apply-all.sh
-```
-
-> **Credential Handling:** Registry tokens are never committed to Git. If `regcred` does not already exist in the cluster, both scripts read `DOCKERHUB_USER`/`DOCKERHUB_TOKEN` from environment variables or prompt interactively, create the secret in-cluster, and clear the token from memory immediately afterward.
+> **Handling `regcred` Errors:** Registry credentials are never committed to Git; the scripts prompt you in-memory if `regcred` is missing. If you accidentally enter a wrong Docker Hub username or token and MySQL enters `ImagePullBackOff`, delete the secret and re-run the script to enter them again:
+> ```bash
+> kubectl delete secret regcred -n fawry-task
+> ```
 
 ---
 
-## 🔍 6. Verification & Testing
+## 🔍 5. Verification & Testing
 
-### 1. Inspect All Cluster Resources
+### 1. Check All Cluster Resources
 ```bash
 kubectl get all,pvc,ingress,netpol -n fawry-task
 ```
 
-### 2. Test via Host-Based TLS Ingress (`flask-app.com`)
-Host-based routing (`https://flask-app.com/`) was chosen over path-based routing (e.g., `/flask`) so Flask's relative static assets and template routes work cleanly without NGINX URL rewrite rules.
-
-Add the local mapping to your hosts file (`/etc/hosts` on Linux/macOS or `C:\Windows\System32\drivers\etc\hosts` on Windows):
-```text
-127.0.0.1 flask-app.com
-```
-Then verify via `curl` or browser:
+### 2. Test via TLS Ingress (`flask-app.com`)
+Host-based routing (`https://flask-app.com/`) was chosen over path-based routing so Flask's relative static assets work cleanly without NGINX URL rewrite rules.
+* Verify with `curl` (or open `https://flask-app.com` in your browser and accept the local self-signed certificate warning):
 ```bash
 curl -k https://flask-app.com
 ```
-*Quick alternative without editing `/etc/hosts`:*
+*Quick test without editing your `hosts` file:*
 ```bash
 curl -k --resolve flask-app.com:443:127.0.0.1 https://flask-app.com
 ```
 
-> **Testing Note (MySQL Split-Brain Symptom):** Because `replicas: 2` runs two independent MySQL instances behind `db-service` without replication, signing up and immediately signing in may fail intermittently if the requests hit different replicas (`mysql-0` vs `mysql-1`). This is expected under the un-replicated 2-replica rubric; see Section 7 below.
-
-### 3. Test via NodePort Service (Bonus Rubric)
-`KindCluster.yaml` maps host ports `80` and `443` for Ingress. To test the NodePort (`:30008`) directly:
-- **On Linux / Docker bridge network:**
-  ```bash
-  WORKER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' k8s-fawry-worker)
-  curl http://$WORKER_IP:30008
-  ```
-- **On Windows/macOS hosts:** either expose port `30008` in `KindCluster.yaml` under `extraPortMappings` or test service routing via `kubectl port-forward svc/flask-service 5002:80 -n fawry-task`.
+### 3. Verify Headless DNS & Zero Split-Brain
+Confirm `mysql-0.db-service` resolves directly to `mysql-0`'s Pod IP:
+```bash
+kubectl run dns-test --rm -it --image=busybox -n fawry-task -- nslookup mysql-0.db-service
+```
+Sign up, sign in, add a wish, log out, and sign back in at `https://flask-app.com` — all requests consistently hit `mysql-0`.
 
 ### 4. Verify NetworkPolicy Isolation
 Confirm that unauthorized pods (without label `app: flask-app`) cannot reach MySQL on port `3306`:
@@ -199,26 +190,31 @@ kubectl run netpol-test --rm -it --image=busybox -n fawry-task -- nc -zvw 3 db-s
 
 ---
 
-## 🧠 7. Engineering Decisions, Trade-offs & Troubleshooting
+## 🧠 6. Engineering Decisions & Issues Solved
 
-### 1. Host OOM Crash & MySQL Stale Volume State
-* **Issue:** During initial deployment, host RAM exhaustion terminated the Docker daemon and KinD nodes mid-initialization. Upon restart, Flask recovered while MySQL pods entered `CrashLoopBackOff` during `docker-entrypoint.sh`.
-* **Root Cause:** Rebuilding and re-tagging the MySQL image did not fix the crash because persistent state lives on the mounted PVC (`/var/lib/mysql`), which was left in a dirty, half-initialized state after the abrupt OOM kill.
-* **Resolution:** Torn down the stale cluster and recreated it cleanly with sufficient memory headroom so dynamic PVCs initialized from scratch.
+### 1. Host RAM Exhaustion & Stuck MySQL Storage State
+* **Issue:** During the first cluster run, host RAM filled up completely (Out-Of-Memory), causing Docker Desktop and the KinD cluster to crash. After restarting, Flask came up fine, while MySQL pods failed during `docker-entrypoint.sh` startup.
+* **Why rebuilding image tags didn't fix it:** Even after rebuilding and pushing new MySQL image versions, the error persisted because the crash interrupted first-time DB initialization mid-way, leaving `/var/lib/mysql` on the persistent volume in a corrupted half-initialized state. Since database state lives on the volume (not in the image layers), changing image tags had no effect.
+* **Fix:** Deleted the cluster completely to wipe the corrupted volumes, freed up RAM, and recreated the cluster cleanly.
 
-### 2. Storage & Dynamic Provisioning Scope
-* Rather than configuring static `hostPath` PersistentVolumes manually, the MySQL `StatefulSet` uses `volumeClaimTemplates` backed by KinD's default `standard` `StorageClass` (`rancher.io/local-path`), which dynamically provisions and binds a dedicated PV per replica. Standalone NFS server provisioning (bonus) was not implemented for this local setup.
+### 2. NGINX Ingress Scheduled on `worker` Instead of `control-plane`
+* **Issue:** `curl -k https://flask-app.com` failed with `curl: (35) Connection was aborted` / `curl: (52) Empty reply`, even though `kubectl port-forward` to the controller worked.
+* **Root Cause:** Docker Desktop does not allow mapping the same host ports (`80`/`443`) to two node containers simultaneously, so `KindCluster.yaml` maps `extraPortMappings` (`80`/`443`) strictly on `control-plane` (labeled `ingress-ready=true`). However, the latest upstream `ingress-nginx` Kind manifest drops `ingress-ready: "true"` from its `nodeSelector`, allowing Kubernetes to schedule the Ingress pod onto the `worker` node — leaving `control-plane` ports `80/443` with no listener.
+* **Fix:** Updated `kind/CreateKindCluster.ps1` to automatically patch `ingress-nginx-controller` with `nodeSelector: {"ingress-ready": "true"}` and wait cleanly using `kubectl rollout status`.
 
-### 3. Known Architectural Trade-offs
-* **MySQL `replicas: 2` & Split-Brain Risk:** Matches the assignment rubric (`2 replicas` behind a `ClusterIP` service). Without replication (e.g., MySQL InnoDB Cluster or a MySQL Operator), `mysql-0` and `mysql-1` hold divergent data. Moving to a Headless Service targeting `mysql-0` (or an Operator) is planned next.
-* **NodePort Alongside Ingress:** Added solely as the assignment's bonus test hook; production clusters should terminate external traffic exclusively at the Ingress/Gateway layer.
-* **Ingress Controller Lifecycle:** `kubernetes/ingress-nginx` matches the assignment spec. Because the community `ingress-nginx` project reached retirement in March 2026, greenfield production deployments should target Kubernetes **Gateway API** or an actively maintained controller.
+### 3. Headless Service (`clusterIP: None`) vs MySQL Replication
+* **Decision:** To satisfy the 2-replica `StatefulSet` layout without burning ~1.5 GB+ extra RAM on a full MySQL Replication Operator, `db-service` was converted to a **Headless Service (`clusterIP: None`)** and Flask connects directly to `mysql-0.db-service`. This prevents split-brain while keeping `mysql-1` running as an idle standby until replication is added later.
+
+### 4. Storage & Ingress Lifecycle Notes
+* **Storage:** Uses KinD's default `standard` `StorageClass` (`rancher.io/local-path`) via `volumeClaimTemplates` to dynamically provision a 500Mi volume per replica (static `hostPath` PVs and NFS were not implemented locally).
+* **Ingress Controller:** `kubernetes/ingress-nginx` is used to match the original project setup. Note that the community `ingress-nginx` project reached retirement in March 2026; greenfield production clusters should target the Kubernetes **Gateway API** or an actively maintained controller.
 
 ---
 
-## 🚧 8. Roadmap (Toward `v2.0.0`)
+## 🚧 7. Roadmap (Toward `v2.0.0`)
 
-- [ ] **High-Cohesion Refactor & Split-Brain Mitigation:** Consolidate manifests into per-component files, convert `db-service` to a Headless Service (`clusterIP: None`) routing Flask to `mysql-0.db-service` until an Operator is introduced, and drop the redundant NodePort.
-- [ ] **CI & Security Scanning:** Add GitHub Actions workflow with automated builds and **Trivy** image/manifest scans.
-- [ ] **Packaging & GitOps:** Package manifests as a **Helm** chart and deploy via **Argo CD**.
-- [ ] **Secrets & Observability:** Replace static dev `mysql-secret.yaml` with **External Secrets / Vault**, and add **Prometheus & Loki**.
+- [x] **High-Cohesion Refactor & Split-Brain Mitigation:** Consolidated manifests into 6 cohesive files, switched `db-service` to a Headless Service (`clusterIP: None`) routing Flask to `mysql-0.db-service`, and pinned `ingress-nginx` to `control-plane`.
+- [ ] **Packaging with Helm:** Package manifests into a parameterized Helm chart (`values.yaml` + `templates/`).
+- [ ] **CI & Security Scanning:** Add GitHub Actions workflow for automated Docker builds and **Trivy** vulnerability/misconfiguration scans.
+- [ ] **GitOps CD:** Deploy **Argo CD** inside KinD to auto-sync the Helm chart from GitHub.
+- [ ] **Observability:** Add lightweight **Prometheus, Grafana, and Loki** for cluster metrics and centralized container logs.
